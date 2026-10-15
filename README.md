@@ -1,4 +1,4 @@
-# pincopy
+# pinspire
 
 A new Flutter project.
 
