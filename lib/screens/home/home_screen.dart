@@ -18,7 +18,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool following = false;
   int edition = 0;
   Future<void> refresh() async {
-    setState(() => edition++);
+    await AppScope.read(context).refreshAll();
+    if (mounted) setState(() => edition++);
   }
 
   void chooseVibe() => showModalBottomSheet<void>(
@@ -301,7 +302,22 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
                 const SizedBox(height: 17),
-                if (pins.isEmpty)
+                if (state.loading && pins.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 48),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (state.error != null && pins.isEmpty)
+                  EmptyState(
+                    title: 'Inspirasi belum termuat',
+                    message: state.error!,
+                    icon: Icons.cloud_off_rounded,
+                    action: FilledButton(
+                      onPressed: state.refreshAll,
+                      child: const Text('Coba lagi'),
+                    ),
+                  )
+                else if (pins.isEmpty)
                   EmptyState(
                     title: following
                         ? 'Belum ada inspirasi di sini'

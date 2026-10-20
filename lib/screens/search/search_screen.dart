@@ -1,11 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';
 import '../../data/demo_data.dart';
+import '../../models/models.dart';
 import '../../state/app_state.dart';
 import '../../widgets/common.dart';
-import '../../widgets/pin_grid.dart';
 import '../../widgets/board_card.dart';
+import '../../widgets/pin_grid.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({
@@ -22,23 +25,88 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   late final TextEditingController query;
   String category = 'Semua', vibe = 'Semua', type = 'Pin', sort = 'Relevan';
+  Timer? debounce;
+  List<Pin> results = const [];
+  List<Creator> people = const [];
+  String lastQuery = '';
+  bool searching = false;
+  String? searchError;
+
   @override
   void initState() {
     super.initState();
     query = TextEditingController(text: widget.initialQuery);
+    if (widget.initialQuery.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) runSearch(widget.initialQuery);
+      });
+    }
   }
 
   @override
   void dispose() {
+    debounce?.cancel();
     query.dispose();
     super.dispose();
   }
 
+  void onChanged(String value) {
+    setState(() {});
+    debounce?.cancel();
+    if (value.trim().isEmpty) {
+      setState(() {
+        results = const [];
+        people = const [];
+        lastQuery = '';
+        searching = false;
+        searchError = null;
+      });
+      return;
+    }
+    debounce = Timer(const Duration(milliseconds: 420), () {
+      if (mounted) runSearch(value);
+    });
+  }
+
+  Future<void> runSearch(String value) async {
+    final term = value.trim();
+    if (term.isEmpty) return;
+    debounce?.cancel();
+    final state = AppScope.read(context);
+    setState(() {
+      searching = true;
+      searchError = null;
+    });
+    final found = await Future.wait<dynamic>([
+      state.searchPins(term),
+      state.searchUsers(term),
+    ]);
+    if (!mounted || query.text.trim() != term) return;
+    setState(() {
+      results = found[0] as List<Pin>;
+      people = found[1] as List<Creator>;
+      lastQuery = term;
+      searching = false;
+      searchError = state.error;
+    });
+  }
+
   void search(String value) {
     query.text = value;
+    onChanged(value);
     AppScope.read(context).rememberSearch(value);
-    setState(() {});
+    runSearch(value);
     FocusScope.of(context).unfocus();
+  }
+
+  List<Pin> sortPins(List<Pin> input) {
+    final pins = [...input];
+    if (sort == 'Populer') {
+      pins.sort((a, b) => b.likes.compareTo(a.likes));
+    } else if (sort == 'Terbaru') {
+      pins.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    }
+    return pins;
   }
 
   void filters() => showModalBottomSheet<void>(
@@ -116,12 +184,15 @@ class _SearchScreenState extends State<SearchScreen> {
     final state = AppScope.of(context);
     final q = query.text.trim();
     final active = q.isNotEmpty || category != 'Semua' || vibe != 'Semua';
-    final pins = state.discover(
-      query: q,
-      category: category,
-      vibe: vibe,
-      sort: sort,
-    );
+    final basePins = q.isEmpty
+        ? state.discover(query: '', category: category, vibe: vibe, sort: sort)
+        : lastQuery == q
+        ? results
+              .where((pin) => category == 'Semua' || pin.category == category)
+              .where((pin) => vibe == 'Semua' || pin.vibe == vibe)
+              .toList()
+        : <Pin>[];
+    final pins = sortPins(basePins);
     final boards = state.boards
         .where(
           (b) => '${b.title} ${b.description}'.toLowerCase().contains(
@@ -129,13 +200,12 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         )
         .toList();
-    final creators = demoCreators
-        .where(
-          (c) => '${c.name} ${c.username} ${c.bio}'.toLowerCase().contains(
-            q.toLowerCase(),
-          ),
-        )
-        .toList();
+    final creators = q.isEmpty
+        ? state.users
+        : lastQuery == q
+        ? people
+        : <Creator>[];
+    final waiting = q.isNotEmpty && (searching || lastQuery != q);
     final body = ContentWidth(
       child: SingleChildScrollView(
         key: const PageStorageKey('search-scroll'),
@@ -164,12 +234,12 @@ class _SearchScreenState extends State<SearchScreen> {
                               tooltip: 'Hapus pencarian',
                               onPressed: () {
                                 query.clear();
-                                setState(() {});
+                                onChanged('');
                               },
                               icon: const Icon(Icons.close_rounded, size: 18),
                             ),
                     ),
-                    onChanged: (_) => setState(() {}),
+                    onChanged: onChanged,
                     onSubmitted: search,
                   ),
                 ),
@@ -241,35 +311,56 @@ class _SearchScreenState extends State<SearchScreen> {
                 style: const TextStyle(color: PColors.muted, fontSize: 12),
               ),
               const SizedBox(height: 18),
-              if (type == 'Pin')
-                (pins.isEmpty
-                    ? const EmptyState(
-                        title: 'Belum menemukan yang pas',
-                        message:
-                            'Coba kata yang lebih singkat atau ubah filter.',
-                        icon: Icons.search_off_rounded,
-                      )
-                    : PinGrid(pins: pins)),
-              if (type == 'Board')
-                (boards.isEmpty
-                    ? const EmptyState(
-                        title: 'Belum ada board yang cocok',
-                        message: 'Pencarian board menampilkan koleksi milikmu.',
-                        icon: Icons.dashboard_outlined,
-                      )
-                    : BoardGrid(boards: boards)),
-              if (type == 'Kreator')
-                (creators.isEmpty
-                    ? const EmptyState(
-                        title: 'Kreator belum ditemukan',
-                        message: 'Coba nama Nara, Raka, Alya, atau Mika.',
-                        icon: Icons.person_search_outlined,
-                      )
-                    : Column(
-                        children: creators
-                            .map((c) => _creatorRow(c.id))
-                            .toList(),
-                      )),
+              if (waiting)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 45),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (q.isNotEmpty &&
+                  searchError != null &&
+                  pins.isEmpty &&
+                  people.isEmpty)
+                EmptyState(
+                  title: 'Pencarian belum termuat',
+                  message: searchError!,
+                  icon: Icons.cloud_off_rounded,
+                  action: FilledButton(
+                    onPressed: () => runSearch(q),
+                    child: const Text('Coba lagi'),
+                  ),
+                )
+              else ...[
+                if (type == 'Pin')
+                  (pins.isEmpty
+                      ? const EmptyState(
+                          title: 'Belum menemukan yang pas',
+                          message:
+                              'Coba kata yang lebih singkat atau ubah filter.',
+                          icon: Icons.search_off_rounded,
+                        )
+                      : PinGrid(pins: pins)),
+                if (type == 'Board')
+                  (boards.isEmpty
+                      ? const EmptyState(
+                          title: 'Belum ada board yang cocok',
+                          message:
+                              'Pencarian board menampilkan koleksi milikmu.',
+                          icon: Icons.dashboard_outlined,
+                        )
+                      : BoardGrid(boards: boards)),
+                if (type == 'Kreator')
+                  (creators.isEmpty
+                      ? const EmptyState(
+                          title: 'Kreator belum ditemukan',
+                          message: 'Coba kata kunci nama atau username lain.',
+                          icon: Icons.person_search_outlined,
+                        )
+                      : Column(
+                          children: creators
+                              .map((c) => _creatorRow(c.id))
+                              .toList(),
+                        )),
+              ],
             ] else ...[
               if (state.recentSearches.isNotEmpty) ...[
                 Row(
@@ -409,7 +500,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 eyebrow: 'KREATOR PILIHAN',
               ),
               const SizedBox(height: 12),
-              ...demoCreators.take(3).map((creator) => _creatorRow(creator.id)),
+              ...state.users.take(3).map((creator) => _creatorRow(creator.id)),
             ],
           ],
         ),

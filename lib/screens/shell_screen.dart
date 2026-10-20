@@ -46,6 +46,19 @@ class _ShellScreenState extends State<ShellScreen> {
               ),
             ],
           ),
+        if (state.error != null)
+          MaterialBanner(
+            content: Text(state.error!, style: const TextStyle(fontSize: 12)),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  state.error = null;
+                  setState(() {});
+                },
+                child: const Text('Tutup'),
+              ),
+            ],
+          ),
         if (state.storageError != null)
           MaterialBanner(
             content: Text(
@@ -63,6 +76,7 @@ class _ShellScreenState extends State<ShellScreen> {
             ],
           ),
         Expanded(child: pages),
+        if (state.loading) const LinearProgressIndicator(minHeight: 2),
       ],
     );
     return Scaffold(

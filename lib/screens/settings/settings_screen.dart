@@ -124,6 +124,22 @@ class SettingsScreen extends StatelessWidget {
               () => interests(context),
             ),
             const SizedBox(height: 23),
+            const _Group('KEAMANAN'),
+            _row(
+              Icons.password_rounded,
+              'Ganti kata sandi',
+              'Perbarui kata sandi akunmu',
+              () async {
+                final changed = await showDialog<bool>(
+                  context: context,
+                  builder: (_) => const _PasswordDialog(),
+                );
+                if (changed == true && context.mounted) {
+                  toast(context, 'Kata sandi berhasil diperbarui');
+                }
+              },
+            ),
+            const SizedBox(height: 23),
             const _Group('SUASANA & KABAR'),
             SwitchListTile.adaptive(
               contentPadding: const EdgeInsets.symmetric(horizontal: 3),
@@ -155,7 +171,7 @@ class SettingsScreen extends StatelessWidget {
                 style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
               ),
               subtitle: const Text(
-                'Tampilkan atau jeda notifikasi contoh.',
+                'Tampilkan atau jeda kabar di aplikasi.',
                 style: TextStyle(fontSize: 10, color: PColors.muted),
               ),
               value: state.notificationsEnabled,
@@ -182,21 +198,13 @@ class SettingsScreen extends StatelessWidget {
               },
             ),
             _row(
-              Icons.restart_alt_rounded,
-              'Reset aktivitas akun ini',
-              'Kembalikan board, pin, dan aktivitas ke data awal',
+              Icons.sync_rounded,
+              'Sinkronkan ulang',
+              'Muat kembali pin, board, dan aktivitas dari server',
               () async {
-                final yes = await confirmAction(
-                  context,
-                  title: 'Reset aktivitas lokal?',
-                  message: 'Pin buatanmu, komentar, pesan, dan perubahan board akun ini akan dihapus. Profil dan akun tetap tersimpan.',
-                  action: 'Reset',
-                );
-                if (yes) {
-                  await state.resetData();
-                  if (context.mounted) {
-                    toast(context, 'Aktivitas dikembalikan ke data awal');
-                  }
+                await state.refreshAll();
+                if (context.mounted) {
+                  toast(context, 'Data akun dimuat ulang');
                 }
               },
             ),
@@ -211,22 +219,22 @@ class SettingsScreen extends StatelessWidget {
             _row(
               Icons.logout_rounded,
               'Keluar',
-              'Aktivitas tetap tersimpan di perangkat ini',
+              'Akhiri sesi API di perangkat ini',
               () => signOut(context),
             ),
             _row(
               Icons.delete_outline_rounded,
-              'Hapus akun lokal',
-              'Hapus profil dan aktivitas akun ini dari perangkat',
+              'Hapus akun',
+              'Hapus akun beserta pin dan aktivitasnya dari server',
               () async {
                 final yes = await confirmAction(
                   context,
-                  title: 'Hapus akun lokal?',
-                  message: 'Profil dan aktivitas akun ini akan dihapus dari perangkat. Data akun lokal ini tidak dapat dipulihkan.',
+                  title: 'Hapus akun?',
+                  message: 'Akun, pin, board, komentar, dan pesan akan dihapus permanen dari server Pinspire.',
                   action: 'Hapus akun',
                 );
                 if (yes) {
-                  await state.deleteLocalAccount();
+                  await state.deleteAccount();
                   if (context.mounted) {
                     Navigator.popUntil(context, (r) => r.isFirst);
                   }
@@ -294,6 +302,113 @@ class _Group extends StatelessWidget {
   );
 }
 
+class _PasswordDialog extends StatefulWidget {
+  const _PasswordDialog();
+  @override
+  State<_PasswordDialog> createState() => _PasswordDialogState();
+}
+
+class _PasswordDialogState extends State<_PasswordDialog> {
+  final form = GlobalKey<FormState>();
+  final current = TextEditingController(),
+      next = TextEditingController(),
+      confirmation = TextEditingController();
+  bool busy = false;
+  String? error;
+
+  @override
+  void dispose() {
+    current.dispose();
+    next.dispose();
+    confirmation.dispose();
+    super.dispose();
+  }
+
+  Future<void> submit() async {
+    if (!form.currentState!.validate() || busy) return;
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    final state = AppScope.read(context);
+    final ok = await state.changePassword(current.text, next.text);
+    if (!mounted) return;
+    if (!ok) {
+      setState(() {
+        busy = false;
+        error = state.error ?? 'Kata sandi belum dapat diperbarui.';
+      });
+      return;
+    }
+    Navigator.pop(context, true);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Ganti kata sandi'),
+    content: Form(
+      key: form,
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextFormField(
+              controller: current,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Kata sandi saat ini',
+              ),
+              validator: (v) =>
+                  (v ?? '').isEmpty ? 'Kata sandi saat ini wajib diisi' : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: next,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Kata sandi baru'),
+              validator: (v) {
+                if ((v ?? '').length < 8) {
+                  return 'Gunakan minimal 8 karakter';
+                }
+                if (v == current.text) {
+                  return 'Gunakan kata sandi yang berbeda';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: confirmation,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Konfirmasi kata sandi baru',
+              ),
+              validator: (v) => v != next.text ? 'Kata sandi belum sama' : null,
+            ),
+            if (error != null) ...[
+              const SizedBox(height: 14),
+              Text(
+                error!,
+                style: const TextStyle(color: PColors.coral, fontSize: 11),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: busy ? null : () => Navigator.pop(context, false),
+        child: const Text('Batal'),
+      ),
+      FilledButton(
+        onPressed: busy ? null : submit,
+        child: Text(busy ? 'Menyimpan...' : 'Simpan'),
+      ),
+    ],
+  );
+}
+
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
   @override
@@ -334,12 +449,12 @@ class AboutScreen extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             const Text(
-              'Mode lokal',
+              'Terhubung ke API',
               style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
             ),
             const SizedBox(height: 9),
             const Text(
-              'Akun, unggahan, komentar, percakapan, dan kabar merupakan simulasi di perangkat ini. Data tidak tersinkron ke akun Pinterest maupun perangkat lain. Board rahasia ditandai privat dan tidak disertakan saat menyalin profil.',
+              'Akun, unggahan, komentar, percakapan, dan kabar disimpan di server Pinspire melalui REST API. Sesi memakai token Bearer dan data lokal hanya menyimpan preferensi tampilan serta penanda sesi. Board rahasia tidak disertakan saat menyalin profil.',
               style: TextStyle(color: PColors.muted, height: 1.8, fontSize: 12),
             ),
             const SizedBox(height: 25),

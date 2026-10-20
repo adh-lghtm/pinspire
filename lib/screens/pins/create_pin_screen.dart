@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';
@@ -21,8 +23,12 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
       description = TextEditingController(),
       source = TextEditingController(),
       tags = TextEditingController();
-  String image = '', category = 'Interior', vibe = 'Calm';
+  String image = '', imageUrlValue = '';
+  String category = 'Interior', vibe = 'Calm';
   String? boardId;
+  Uint8List? imageBytes;
+  String imageMime = 'image/jpeg', imageName = 'pin.jpg';
+  bool imageChanged = false;
   double aspectRatio = .75;
   bool loading = false, dirty = false;
   int paletteIndex = 0;
@@ -50,6 +56,7 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
           source.text = pin.sourceUrl;
           tags.text = pin.tags.join(', ');
           image = pin.image;
+          imageUrlValue = pin.image.startsWith('http') ? pin.image : '';
           category = pin.category;
           vibe = pin.vibe;
           aspectRatio = pin.aspectRatio;
@@ -60,11 +67,28 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
         MediaService.recoveredPhoto = null;
         setState(() {
           image = p.dataUri;
+          imageBytes = p.bytes;
+          imageMime = p.mimeType;
+          imageName = p.filename;
+          imageChanged = true;
           aspectRatio = p.aspectRatio;
           dirty = true;
         });
         toast(context, 'Gambar yang dipilih sebelumnya berhasil dipulihkan.');
       }
+    });
+  }
+
+  void usePhoto(SelectedPhoto photo) {
+    setState(() {
+      image = photo.dataUri;
+      imageBytes = photo.bytes;
+      imageMime = photo.mimeType;
+      imageName = photo.filename;
+      imageUrlValue = '';
+      imageChanged = true;
+      aspectRatio = photo.aspectRatio;
+      dirty = true;
     });
   }
 
@@ -80,13 +104,7 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
   Future<void> gallery() async {
     try {
       final photo = await MediaService.pickPhoto();
-      if (photo != null && mounted) {
-        setState(() {
-          image = photo.dataUri;
-          aspectRatio = photo.aspectRatio;
-          dirty = true;
-        });
-      }
+      if (photo != null && mounted) usePhoto(photo);
     } on FormatException catch (e) {
       if (mounted) toast(context, e.message);
     } catch (_) {
@@ -140,6 +158,9 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
     if (value != null && mounted) {
       setState(() {
         image = value;
+        imageUrlValue = value;
+        imageBytes = null;
+        imageChanged = true;
         aspectRatio = .75;
         dirty = true;
       });
@@ -163,7 +184,7 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
             ),
             const SizedBox(height: 8),
             const Text(
-              'Gambar tersedia offline untuk mencoba alur buat pin.',
+              'Gambar contoh akan diunggah sebagai bagian dari pin baru.',
               style: TextStyle(color: PColors.muted, fontSize: 12),
             ),
             const SizedBox(height: 18),
@@ -177,13 +198,19 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
                 ),
                 itemCount: demoPins.length,
                 itemBuilder: (_, i) => GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      image = demoPins[i].image;
-                      aspectRatio = demoPins[i].aspectRatio;
-                      dirty = true;
-                    });
-                    Navigator.pop(ctx);
+                  onTap: () async {
+                    try {
+                      final photo = await MediaService.fromAsset(
+                        demoPins[i].image,
+                      );
+                      if (!mounted) return;
+                      usePhoto(photo);
+                      if (ctx.mounted) Navigator.pop(ctx);
+                    } catch (_) {
+                      if (ctx.mounted) {
+                        toast(ctx, 'Gambar contoh belum dapat dimuat.');
+                      }
+                    }
                   },
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(13),
@@ -199,25 +226,11 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
   );
   Future<void> save() async {
     if (!form.currentState!.validate()) return;
-    if (image.isEmpty) {
+    if (image.trim().isEmpty) {
       toast(context, 'Pilih gambar terlebih dahulu');
       return;
     }
     final state = AppScope.read(context);
-    final mediaChars =
-        state.customPins
-            .where(
-              (p) => p.id != widget.editPinId && p.image.startsWith('data:'),
-            )
-            .fold<int>(0, (sum, p) => sum + p.image.length) +
-        (image.startsWith('data:') ? image.length : 0);
-    if (mediaChars > 1800000) {
-      toast(
-        context,
-        'Kuota gambar lokal sudah penuh. Hapus pin unggahan lama atau gunakan URL gambar.',
-      );
-      return;
-    }
     setState(() => loading = true);
     final pinTags = tags.text
         .split(',')
@@ -225,49 +238,60 @@ class _CreatePinScreenState extends State<CreatePinScreen> {
         .where((t) => t.isNotEmpty)
         .take(8)
         .toList();
-    String id;
+    final palette = existingPalette ?? palettes[paletteIndex];
     if (widget.editPinId != null) {
-      id = widget.editPinId!;
-      state.updatePin(id, {
-        'title': title.text.trim(),
-        'description': description.text.trim(),
-        'image': image,
-        'category': category,
-        'vibe': vibe,
-        'aspectRatio': aspectRatio,
-        'palette': existingPalette ?? palettes[paletteIndex],
-        'sourceUrl': source.text.trim(),
-        'tags': pinTags,
-      }, boardId: boardId);
-    } else {
-      id = state.publishPin(
+      final ok = await state.updatePin(
+        widget.editPinId!,
         title: title.text,
         description: description.text,
-        image: image,
         category: category,
         vibe: vibe,
-        aspectRatio: aspectRatio,
-        palette: existingPalette ?? palettes[paletteIndex],
-        sourceUrl: source.text,
-        boardId: boardId,
         tags: pinTags,
+        palette: palette,
+        sourceUrl: source.text,
+        imageUrl: imageUrlValue,
+        imageBytes: imageBytes,
+        imageMime: imageMime,
+        imageName: imageName,
+        imageChanged: imageChanged,
+        boardId: boardId,
       );
+      if (!mounted) return;
+      if (!ok) {
+        setState(() => loading = false);
+        toast(context, state.error ?? 'Pin belum dapat diperbarui.');
+        return;
+      }
+      dirty = false;
+      Navigator.pop(context);
+      toast(context, 'Pin diperbarui');
+      return;
     }
-    await state.flush();
+
+    final pin = await state.publishPin(
+      title: title.text,
+      description: description.text,
+      category: category,
+      vibe: vibe,
+      palette: palette,
+      aspectRatio: aspectRatio,
+      sourceUrl: source.text,
+      boardId: boardId,
+      tags: pinTags,
+      imageUrl: imageUrlValue,
+      imageBytes: imageBytes,
+      imageMime: imageMime,
+      imageName: imageName,
+    );
     if (!mounted) return;
-    if (state.storageError != null) {
+    if (pin == null) {
       setState(() => loading = false);
-      toast(context, state.storageError!);
+      toast(context, state.error ?? 'Pin belum dapat diterbitkan.');
       return;
     }
     dirty = false;
-    if (widget.editPinId != null) {
-      Navigator.pop(context);
-      toast(context, 'Pin diperbarui');
-    } else {
-      Navigator.pushReplacementNamed(context, '/pin', arguments: id);
-      toast(context, 'Pin baru berhasil dibuat');
-    }
+    Navigator.pushReplacementNamed(context, '/pin', arguments: pin.id);
+    toast(context, 'Pin baru berhasil dibuat');
   }
 
   @override

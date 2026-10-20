@@ -1,88 +1,83 @@
-import 'dart:convert';
-import 'dart:math';
-
-import 'package:crypto/crypto.dart';
-
 import '../models/models.dart';
+import 'api_client.dart';
 import 'local_store.dart';
 
-/// Autentikasi lokal untuk presentasi. Bukan pengganti layanan autentikasi server.
-/// Password tidak disimpan sebagai teks. Jangan gunakan kredensial akun nyata.
+/// Authenticates against the Pinspire API and keeps the Sanctum token in
+/// local storage (SharedPreferences). No password is ever stored locally.
 class AuthService {
-  AuthService(this.store);
-  final LocalStore store;
-  static const accountKey = 'pinspire.local_account.v1';
-  static const demoEmail = 'demo@pinspire.app';
-  static const demoPassword = 'Pinspire123!';
+  AuthService(this.store, this.api);
 
-  String _digest(String password, String salt) =>
-      sha256.convert(utf8.encode('$salt:$password')).toString();
+  final LocalStore store;
+  final ApiClient api;
+
+  static const tokenKey = 'pinspire.api_token.v1';
+  static const demoEmail = 'demo@pinspire.test';
+  static const demoPassword = 'password';
+
+  Future<String?> restoreToken() async {
+    final token = await store.read(tokenKey);
+    api.token = token;
+    return token;
+  }
+
   Future<UserProfile> login(String email, String password) async {
-    if (email.trim().toLowerCase() == demoEmail && password == demoPassword) {
-      return const UserProfile();
-    }
-    final raw = await store.read(accountKey);
-    if (raw != null) {
-      final account = jsonDecode(raw) as Map<String, dynamic>;
-      if (account['email'] == email.trim().toLowerCase() &&
-          account['hash'] == _digest(password, account['salt'] as String)) {
-        return UserProfile.fromJson(account['profile'] as Map<String, dynamic>);
-      }
-    }
-    throw const FormatException(
-      'Email atau kata sandi tidak cocok dengan akun lokal.',
+    final result = await api.post(
+      '/auth/login',
+      body: {
+        'email': email.trim().toLowerCase(),
+        'password': password,
+        'device_name': 'pinspire-web',
+      },
     );
+    await _persistToken(result.object['access_token'] as String?);
+    return UserProfile.fromApi(result.object['user'] as Map<String, dynamic>);
   }
 
   Future<UserProfile> register(
     String name,
+    String username,
     String email,
     String password,
   ) async {
-    final normalized = email.trim().toLowerCase();
-    if (normalized == demoEmail) {
-      throw const FormatException('Alamat ini sudah dipakai akun demo.');
-    }
-    final existing = await store.read(accountKey);
-    if (existing != null) {
-      throw const FormatException(
-        'Satu akun lokal sudah terdaftar di perangkat ini. Silakan masuk atau reset melalui Pengaturan.',
-      );
-    }
-    final salt = base64Encode(
-      List<int>.generate(24, (_) => Random.secure().nextInt(256)),
+    final result = await api.post(
+      '/auth/register',
+      body: {
+        'name': name.trim(),
+        'username': username.trim().toLowerCase(),
+        'email': email.trim().toLowerCase(),
+        'password': password,
+        'password_confirmation': password,
+        'device_name': 'pinspire-web',
+      },
     );
-    final username = normalized
-        .split('@')
-        .first
-        .replaceAll(RegExp(r'[^a-z0-9_.]'), '');
-    final profile = UserProfile(
-      name: name.trim(),
-      username: username,
-      email: normalized,
-      bio: 'Mengumpulkan ide, satu pin setiap hari.',
-    );
-    await store.write(
-      accountKey,
-      jsonEncode({
-        'email': normalized,
-        'salt': salt,
-        'hash': _digest(password, salt),
-        'profile': profile.toJson(),
-      }),
-    );
-    return profile;
+    await _persistToken(result.object['access_token'] as String?);
+    return UserProfile.fromApi(result.object['user'] as Map<String, dynamic>);
   }
 
-  Future<void> updateProfile(UserProfile profile) async {
-    final raw = await store.read(accountKey);
-    if (raw == null) return;
-    final account = jsonDecode(raw) as Map<String, dynamic>;
-    if (account['email'] == profile.email) {
-      account['profile'] = profile.toJson();
-      await store.write(accountKey, jsonEncode(account));
+  Future<UserProfile> me() async {
+    final result = await api.get('/auth/me');
+    return UserProfile.fromApi(result.object);
+  }
+
+  Future<void> logout() async {
+    try {
+      if (api.token != null) await api.post('/auth/logout');
+    } finally {
+      await clearToken();
     }
   }
 
-  Future<void> reset() => store.remove(accountKey);
+  Future<void> _persistToken(String? token) async {
+    api.token = token;
+    if (token == null || token.isEmpty) {
+      await store.remove(tokenKey);
+    } else {
+      await store.write(tokenKey, token);
+    }
+  }
+
+  Future<void> clearToken() async {
+    api.token = null;
+    await store.remove(tokenKey);
+  }
 }

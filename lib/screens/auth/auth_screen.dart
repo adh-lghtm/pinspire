@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';
 import '../../core/utils.dart';
+import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../state/app_state.dart';
 import '../../widgets/common.dart';
@@ -17,6 +18,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final email = TextEditingController(),
       password = TextEditingController(),
       name = TextEditingController(),
+      username = TextEditingController(),
       confirmation = TextEditingController();
   bool register = false, obscure = true, busy = false;
   @override
@@ -24,6 +26,7 @@ class _AuthScreenState extends State<AuthScreen> {
     email.dispose();
     password.dispose();
     name.dispose();
+    username.dispose();
     confirmation.dispose();
     super.dispose();
   }
@@ -39,18 +42,18 @@ class _AuthScreenState extends State<AuthScreen> {
               AuthService.demoPassword,
             )
           : register
-          ? await state.auth.register(name.text, email.text, password.text)
+          ? await state.auth.register(
+              name.text,
+              username.text,
+              email.text,
+              password.text,
+            )
           : await state.auth.login(email.text, password.text);
       await state.signIn(profile);
-    } on FormatException catch (e) {
-      if (mounted) toast(context, e.message);
-    } catch (_) {
-      if (mounted) {
-        toast(
-          context,
-          'Data lokal belum dapat disimpan. Periksa ruang penyimpanan lalu coba lagi.',
-        );
-      }
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.firstError ?? e.message);
+    } catch (e) {
+      if (mounted) toast(context, 'Masuk belum berhasil: $e');
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -76,12 +79,12 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
           const SizedBox(height: 8),
           const SelectableText(
-            'Email: demo@pinspire.app\nKata sandi: Pinspire123!',
+            'Email: demo@pinspire.test\nKata sandi: password',
             style: TextStyle(color: PColors.sage, height: 1.8),
           ),
           const SizedBox(height: 16),
           const Text(
-            'Akun tambahan hanya tersimpan di perangkat ini. Pemulihan melalui email belum tersedia pada versi lokal.',
+            'Akun terhubung ke API Pinspire. Pastikan server backend berjalan saat kamu masuk.',
             style: TextStyle(color: PColors.muted, height: 1.6),
           ),
           const SizedBox(height: 20),
@@ -142,6 +145,20 @@ class _AuthScreenState extends State<AuthScreen> {
                             ),
                             textCapitalization: TextCapitalization.words,
                             validator: (v) => requiredText(v, 'Nama'),
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: username,
+                            maxLength: 30,
+                            decoration: const InputDecoration(
+                              labelText: 'Username',
+                              prefixText: '@',
+                            ),
+                            validator: (v) =>
+                                RegExp(r'^[a-z0-9_]{3,30}$')
+                                    .hasMatch(v?.trim().toLowerCase() ?? '')
+                                ? null
+                                : '3–30 karakter: huruf kecil, angka, atau garis bawah',
                           ),
                           const SizedBox(height: 12),
                         ],
@@ -248,7 +265,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         busy
                             ? 'Memproses...'
                             : register
-                            ? 'Buat profil lokal'
+                            ? 'Buat akun'
                             : 'Masuk',
                       ),
                     ),
@@ -273,8 +290,8 @@ class _AuthScreenState extends State<AuthScreen> {
                             },
                       child: Text(
                         register
-                            ? 'Sudah punya profil? Masuk'
-                            : 'Belum punya profil? Daftar',
+                            ? 'Sudah punya akun? Masuk'
+                            : 'Belum punya akun? Daftar',
                         style: const TextStyle(
                           fontSize: 12,
                           color: PColors.text,
@@ -284,7 +301,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                   const SizedBox(height: 18),
                   const Text(
-                    'Versi tugas kuliah • akun dan aktivitas tersimpan lokal. Gunakan data percobaan.',
+                    'Versi tugas kuliah • terhubung ke API Pinspire. Gunakan akun demo untuk mencoba.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: PColors.muted,

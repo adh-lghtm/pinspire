@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';
 import '../../core/utils.dart';
-import '../../data/demo_data.dart';
 import '../../state/app_state.dart';
 import '../../widgets/common.dart';
 
@@ -28,28 +27,42 @@ class _InboxScreenState extends State<InboxScreen> {
             style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 15),
-          ...demoCreators.map(
-            (c) => ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: UserAvatar(name: c.name, image: c.avatar, size: 42),
-              title: Text(
-                c.name,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
+          if (AppScope.of(ctx).users.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Text(
+                'Belum ada kreator lain untuk diajak berbicara.',
+                style: TextStyle(color: PColors.muted),
+              ),
+            ),
+          ...AppScope.of(ctx).users
+              .take(8)
+              .map(
+                (c) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: UserAvatar(name: c.name, image: c.avatar, size: 42),
+                  title: Text(
+                    c.name,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    '@${c.username}',
+                    style: const TextStyle(color: PColors.muted, fontSize: 10),
+                  ),
+                  trailing: const Icon(
+                    Icons.arrow_forward_rounded,
+                    size: 18,
+                    color: PColors.muted,
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    Navigator.pushNamed(context, '/chat', arguments: c.id);
+                  },
                 ),
               ),
-              trailing: const Icon(
-                Icons.arrow_forward_rounded,
-                size: 18,
-                color: PColors.muted,
-              ),
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.pushNamed(context, '/chat', arguments: c.id);
-              },
-            ),
-          ),
         ],
       ),
     ),
@@ -57,9 +70,7 @@ class _InboxScreenState extends State<InboxScreen> {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final people = demoCreators
-        .where((c) => state.messagesFor(c.id).isNotEmpty)
-        .toList();
+    final people = state.conversations;
     return ContentWidth(
       maxWidth: 850,
       child: SingleChildScrollView(
@@ -114,7 +125,7 @@ class _InboxScreenState extends State<InboxScreen> {
                     SizedBox(width: 12),
                     Expanded(
                       child: Text(
-                        'Ruang percakapan demo. Pesan tersimpan di perangkatmu dan tidak dikirim ke orang lain.',
+                        'Percakapan tersimpan di server Pinspire dan tersinkron antar sesi akunmu.',
                         style: TextStyle(
                           color: PColors.muted,
                           fontSize: 11,
@@ -129,18 +140,17 @@ class _InboxScreenState extends State<InboxScreen> {
               if (people.isEmpty)
                 EmptyState(
                   title: 'Mulai dari sapaan kecil',
-                  message:
-                      'Pilih kreator contoh untuk mencoba alur percakapan.',
+                  message: 'Pilih kreator untuk memulai percakapan baru.',
                   icon: Icons.chat_bubble_outline_rounded,
                   action: OutlinedButton(
                     onPressed: newChat,
                     child: const Text('Percakapan baru'),
                   ),
                 ),
-              ...people.map((c) {
-                final messages = state.messagesFor(c.id);
-                final last = messages.last;
-                final unread = !state.readThreads.contains(c.id) && !last.mine;
+              ...people.map((conversation) {
+                final c = conversation.user;
+                final last = conversation.lastMessage;
+                final unread = conversation.unreadCount > 0;
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 5),
                   child: ListTile(
@@ -163,7 +173,7 @@ class _InboxScreenState extends State<InboxScreen> {
                           ),
                         ),
                         Text(
-                          dateLabel(last.createdAt),
+                          last == null ? '' : dateLabel(last.createdAt),
                           style: const TextStyle(
                             color: PColors.muted,
                             fontSize: 9,
@@ -174,7 +184,9 @@ class _InboxScreenState extends State<InboxScreen> {
                     subtitle: Padding(
                       padding: const EdgeInsets.only(top: 7),
                       child: Text(
-                        '${last.mine ? 'Kamu: ' : ''}${last.text}',
+                        last == null
+                            ? 'Mulai percakapan'
+                            : '${last.mine ? 'Kamu: ' : ''}${last.text}',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -186,11 +198,20 @@ class _InboxScreenState extends State<InboxScreen> {
                     ),
                     trailing: unread
                         ? Container(
-                            width: 7,
-                            height: 7,
+                            width: 20,
+                            height: 20,
+                            alignment: Alignment.center,
                             decoration: const BoxDecoration(
                               color: PColors.coral,
                               shape: BoxShape.circle,
+                            ),
+                            child: Text(
+                              '${conversation.unreadCount}',
+                              style: const TextStyle(
+                                color: PColors.background,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           )
                         : null,
@@ -254,8 +275,14 @@ class NotificationList extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 8),
+        if (state.notificationItems.isEmpty)
+          const EmptyState(
+            title: 'Belum ada kabar',
+            message: 'Aktivitas baru dari kreator akan muncul di sini.',
+            icon: Icons.notifications_none_rounded,
+          ),
         ...state.notificationItems.map((n) {
-          final unread = !state.readNotifications.contains(n['id']);
+          final unread = !n.isRead;
           return Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: Material(
@@ -271,11 +298,19 @@ class NotificationList extends StatelessWidget {
                   height: 65,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: PinImage(n['image']!),
+                    child: n.image.isEmpty
+                        ? const ColoredBox(
+                            color: PColors.elevated,
+                            child: Icon(
+                              Icons.auto_awesome_outlined,
+                              color: PColors.coral,
+                            ),
+                          )
+                        : PinImage(n.image),
                   ),
                 ),
                 title: Text(
-                  n['title']!,
+                  n.title,
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
@@ -284,7 +319,7 @@ class NotificationList extends StatelessWidget {
                 subtitle: Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
-                    n['body']!,
+                    n.body,
                     style: const TextStyle(
                       fontSize: 10,
                       color: PColors.muted,
@@ -296,8 +331,16 @@ class NotificationList extends StatelessWidget {
                     ? const Icon(Icons.circle, size: 6, color: PColors.coral)
                     : null,
                 onTap: () {
-                  state.markRead(n['id']!);
-                  Navigator.pushNamed(context, '/pin', arguments: n['target']);
+                  state.markRead(n.id);
+                  if (n.targetType == 'user' && n.targetId.isNotEmpty) {
+                    Navigator.pushNamed(
+                      context,
+                      '/creator',
+                      arguments: n.targetId,
+                    );
+                  } else if (n.targetId.isNotEmpty) {
+                    Navigator.pushNamed(context, '/pin', arguments: n.targetId);
+                  }
                 },
               ),
             ),
@@ -305,7 +348,7 @@ class NotificationList extends StatelessWidget {
         }),
         const SizedBox(height: 10),
         const Text(
-          'Kabar contoh untuk menjelajahi koleksi. Tidak menggunakan push notification.',
+          'Kabar dibuat dari aktivitas mengikuti, menyukai, dan menyimpan pin.',
           style: TextStyle(color: PColors.muted, fontSize: 10, height: 1.7),
         ),
       ],

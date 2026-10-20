@@ -25,6 +25,7 @@ class _BoardEditorState extends State<_BoardEditor> {
   final form = GlobalKey<FormState>();
   late final TextEditingController name, description;
   late bool secret;
+  bool saving = false;
   @override
   void initState() {
     super.initState();
@@ -40,24 +41,37 @@ class _BoardEditorState extends State<_BoardEditor> {
     super.dispose();
   }
 
-  void save() {
-    if (!form.currentState!.validate()) return;
+  Future<void> save() async {
+    if (!form.currentState!.validate() || saving) return;
+    setState(() => saving = true);
     final state = AppScope.read(context);
+    state.error = null;
     final board = widget.board;
-    String id;
     if (board == null) {
-      id = state.createBoard(name.text, description.text, secret);
-    } else {
-      id = board.id;
-      state.editBoard(
-        board.copyWith(
-          title: name.text.trim(),
-          description: description.text.trim(),
-          secret: secret,
-        ),
-      );
+      final id = await state.createBoard(name.text, description.text, secret);
+      if (!mounted) return;
+      if (id == null) {
+        setState(() => saving = false);
+        toast(context, state.error ?? 'Board belum dapat dibuat.');
+        return;
+      }
+      Navigator.pop(context, id);
+      return;
     }
-    Navigator.pop(context, id);
+    await state.editBoard(
+      board.copyWith(
+        title: name.text.trim(),
+        description: description.text.trim(),
+        secret: secret,
+      ),
+    );
+    if (!mounted) return;
+    if (state.error != null) {
+      setState(() => saving = false);
+      toast(context, state.error!);
+      return;
+    }
+    Navigator.pop(context, board.id);
   }
 
   @override
@@ -111,7 +125,7 @@ class _BoardEditorState extends State<_BoardEditor> {
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
               ),
               subtitle: const Text(
-                'Ditandai privat di profil lokalmu.',
+                'Hanya terlihat olehmu.',
                 style: TextStyle(color: PColors.muted, fontSize: 12),
               ),
               value: secret,
@@ -121,9 +135,13 @@ class _BoardEditorState extends State<_BoardEditor> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: save,
+                onPressed: saving ? null : save,
                 child: Text(
-                  widget.board == null ? 'Buat board' : 'Simpan perubahan',
+                  saving
+                      ? 'Menyimpan...'
+                      : widget.board == null
+                      ? 'Buat board'
+                      : 'Simpan perubahan',
                 ),
               ),
             ),

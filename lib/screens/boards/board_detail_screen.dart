@@ -16,6 +16,14 @@ class BoardDetailScreen extends StatefulWidget {
 
 class _BoardDetailScreenState extends State<BoardDetailScreen> {
   bool popular = false;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) AppScope.read(context).loadBoard(widget.boardId);
+    });
+  }
+
   Future<void> menu(String value) async {
     final state = AppScope.read(context);
     final board = state.boardById(widget.boardId);
@@ -32,8 +40,8 @@ class _BoardDetailScreenState extends State<BoardDetailScreen> {
             'Board “${board.title}” akan dihapus. Pin buatanmu tetap ada di profil.',
       );
       if (yes && mounted) {
-        state.deleteBoard(board.id);
-        Navigator.pop(context);
+        await state.deleteBoard(board.id);
+        if (mounted) Navigator.pop(context);
       }
     }
   }

@@ -27,6 +27,11 @@ class _BoardsScreenState extends State<BoardsScreen> {
         title: const Text('Semua board'),
         actions: [
           IconButton(
+            tooltip: 'Muat ulang board',
+            onPressed: () => AppScope.read(context).refreshAll(),
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+          IconButton(
             tooltip: 'Buat board',
             onPressed: () => showBoardEditor(context),
             icon: const Icon(Icons.add_rounded),

@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 
 import '../../core/theme.dart';
 import '../../core/utils.dart';
-import '../../data/demo_data.dart';
 import '../../state/app_state.dart';
 import '../../widgets/board_card.dart';
 import '../../widgets/board_sheets.dart';
@@ -23,58 +22,61 @@ class _ProfileScreenState extends State<ProfileScreen> {
   void following() => showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,
-    builder: (ctx) {
-      final state = AppScope.of(ctx);
-      final people = demoCreators
-          .where((c) => state.followedIds.contains(c.id))
-          .toList();
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Kreator yang kamu ikuti',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-            ),
-            const SizedBox(height: 16),
-            if (people.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 25),
-                child: Text(
-                  'Belum ada kreator yang diikuti.',
-                  style: TextStyle(color: PColors.muted),
-                ),
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, update) {
+        final state = AppScope.of(ctx);
+        final people = state.following;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Kreator yang kamu ikuti',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
               ),
-            ...people.map(
-              (c) => ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: UserAvatar(name: c.name, image: c.avatar, size: 40),
-                title: Text(
-                  c.name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 12,
+              const SizedBox(height: 16),
+              if (people.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 25),
+                  child: Text(
+                    'Belum ada kreator yang diikuti.',
+                    style: TextStyle(color: PColors.muted),
                   ),
                 ),
-                trailing: TextButton(
-                  onPressed: () => state.toggleFollow(c.id),
-                  child: const Text(
-                    'Batal ikuti',
-                    style: TextStyle(color: PColors.muted, fontSize: 10),
+              ...people.map(
+                (c) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: UserAvatar(name: c.name, image: c.avatar, size: 40),
+                  title: Text(
+                    c.name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
                   ),
+                  trailing: TextButton(
+                    onPressed: () async {
+                      await state.toggleFollow(c.id);
+                      update(() {});
+                    },
+                    child: const Text(
+                      'Batal ikuti',
+                      style: TextStyle(color: PColors.muted, fontSize: 10),
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    Navigator.pushNamed(context, '/creator', arguments: c.id);
+                  },
                 ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  Navigator.pushNamed(context, '/creator', arguments: c.id);
-                },
               ),
-            ),
-          ],
-        ),
-      );
-    },
+            ],
+          ),
+        );
+      },
+    ),
   );
   Future<void> copyProfile() async {
     final state = AppScope.read(context);
@@ -226,7 +228,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   () => setState(() => tab = 'Board'),
                 ),
                 const SizedBox(width: 28),
-                _stat('${state.followedIds.length}', 'Mengikuti', following),
+                _stat('${state.following.length}', 'Mengikuti', following),
               ],
             ),
             const SizedBox(height: 24),
@@ -365,16 +367,32 @@ class _ProfileScreenState extends State<ProfileScreen> {
   );
 }
 
-class CreatorProfileScreen extends StatelessWidget {
+class CreatorProfileScreen extends StatefulWidget {
   const CreatorProfileScreen({super.key, required this.creatorId});
   final String creatorId;
   @override
+  State<CreatorProfileScreen> createState() => _CreatorProfileScreenState();
+}
+
+class _CreatorProfileScreenState extends State<CreatorProfileScreen> {
+  bool loading = true;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await AppScope.read(context).loadCreatorPins(widget.creatorId);
+      if (mounted) setState(() => loading = false);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (creatorId == 'me') return const ProfileScreen(standalone: true);
+    if (widget.creatorId == 'me') return const ProfileScreen(standalone: true);
     final state = AppScope.of(context);
-    final creator = state.creator(creatorId);
-    final followed = state.followedIds.contains(creatorId);
-    final pins = state.pins.where((p) => p.authorId == creatorId).toList();
+    final creator = state.creator(widget.creatorId);
+    final followed = state.followedIds.contains(widget.creatorId);
+    final pins = state.pinsForCreator(widget.creatorId);
     return Scaffold(
       appBar: AppBar(title: const Text('Profil kreator')),
       body: ContentWidth(
@@ -408,19 +426,21 @@ class CreatorProfileScreen extends StatelessWidget {
                         fontSize: 12,
                       ),
                     ),
-                    const SizedBox(height: 14),
-                    Text(
-                      creator.bio,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: PColors.muted,
-                        height: 1.7,
+                    if (creator.bio.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      Text(
+                        creator.bio,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: PColors.muted,
+                          height: 1.7,
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(height: 13),
                     Text(
-                      '${pins.length} ide dikurasi',
+                      '${pins.length} ide dikurasi · ${creator.followersCount} pengikut',
                       style: const TextStyle(
                         color: PColors.muted,
                         fontSize: 11,
@@ -431,7 +451,10 @@ class CreatorProfileScreen extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         FilledButton(
-                          onPressed: () => state.toggleFollow(creatorId),
+                          onPressed: () async {
+                            await state.toggleFollow(widget.creatorId);
+                            if (mounted) setState(() {});
+                          },
                           child: Text(followed ? 'Mengikuti' : 'Ikuti kreator'),
                         ),
                         const SizedBox(width: 12),
@@ -439,7 +462,7 @@ class CreatorProfileScreen extends StatelessWidget {
                           onPressed: () => Navigator.pushNamed(
                             context,
                             '/chat',
-                            arguments: creatorId,
+                            arguments: widget.creatorId,
                           ),
                           icon: const Icon(
                             Icons.chat_bubble_outline_rounded,
@@ -461,7 +484,19 @@ class CreatorProfileScreen extends StatelessWidget {
                 eyebrow: 'KOLEKSI PIN',
               ),
               const SizedBox(height: 22),
-              PinGrid(pins: pins),
+              if (loading && pins.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 40),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (pins.isEmpty)
+                const EmptyState(
+                  title: 'Belum ada pin',
+                  message: 'Kreator ini belum membagikan inspirasi.',
+                  icon: Icons.photo_library_outlined,
+                )
+              else
+                PinGrid(pins: pins),
             ],
           ),
         ),

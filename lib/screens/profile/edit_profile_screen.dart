@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';
 import '../../core/utils.dart';
+import '../../services/api_client.dart';
 import '../../services/media_service.dart';
 import '../../state/app_state.dart';
 import '../../widgets/common.dart';
@@ -16,9 +17,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final form = GlobalKey<FormState>();
   final name = TextEditingController(),
       username = TextEditingController(),
-      bio = TextEditingController();
+      bio = TextEditingController(),
+      website = TextEditingController();
   String avatar = '';
-  bool initialized = false, saving = false;
+  SelectedPhoto? photo;
+  bool removeAvatar = false, initialized = false, saving = false;
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -27,6 +30,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       name.text = u.name;
       username.text = u.username;
       bio.text = u.bio;
+      website.text = u.website;
       avatar = u.avatar;
       initialized = true;
     }
@@ -37,13 +41,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     name.dispose();
     username.dispose();
     bio.dispose();
+    website.dispose();
     super.dispose();
   }
 
-  Future<void> photo() async {
+  Future<void> pick() async {
     try {
       final picked = await MediaService.pickPhoto();
-      if (picked != null && mounted) setState(() => avatar = picked.dataUri);
+      if (picked != null && mounted) {
+        setState(() {
+          photo = picked;
+          removeAvatar = false;
+          avatar = picked.dataUri;
+        });
+      }
     } on FormatException catch (e) {
       if (mounted) toast(context, e.message);
     } catch (_) {
@@ -63,21 +74,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           name: name.text.trim(),
           username: username.text.trim().toLowerCase(),
           bio: bio.text.trim(),
+          website: website.text.trim(),
           avatar: avatar,
         ),
+        avatarBytes: photo?.bytes,
+        avatarMime: photo?.mimeType ?? 'image/jpeg',
+        avatarName: photo?.filename ?? 'avatar.jpg',
+        removeAvatar: removeAvatar,
       );
       if (!mounted) return;
-      if (state.storageError != null) {
-        toast(context, state.storageError!);
-        setState(() => saving = false);
-        return;
-      }
       Navigator.pop(context);
       toast(context, 'Profil diperbarui');
-    } catch (_) {
+    } on ApiException catch (e) {
       if (mounted) {
         setState(() => saving = false);
-        toast(context, 'Profil belum dapat disimpan. Coba lagi.');
+        toast(context, e.firstError ?? e.message);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => saving = false);
+        toast(context, state.error ?? 'Profil belum dapat disimpan.');
       }
     }
   }
@@ -105,7 +121,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                     const SizedBox(height: 8),
                     TextButton.icon(
-                      onPressed: photo,
+                      onPressed: pick,
                       icon: const Icon(Icons.photo_camera_outlined, size: 17),
                       label: const Text(
                         'Ganti foto',
@@ -114,7 +130,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                     if (avatar.isNotEmpty)
                       TextButton(
-                        onPressed: () => setState(() => avatar = ''),
+                        onPressed: () => setState(() {
+                          avatar = '';
+                          photo = null;
+                          removeAvatar = true;
+                        }),
                         child: const Text(
                           'Hapus foto',
                           style: TextStyle(color: PColors.muted, fontSize: 10),
@@ -151,6 +171,17 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 maxLines: 4,
                 decoration: const InputDecoration(labelText: 'Tentang kamu'),
                 textCapitalization: TextCapitalization.sentences,
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: website,
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: 'Situs web (opsional)',
+                  hintText: 'https://contoh.com',
+                  prefixIcon: Icon(Icons.link_rounded, size: 19),
+                ),
+                validator: validWebUrl,
               ),
               const SizedBox(height: 15),
               InputDecorator(

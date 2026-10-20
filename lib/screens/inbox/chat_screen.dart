@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';
+import '../../core/utils.dart';
 import '../../state/app_state.dart';
 import '../../widgets/common.dart';
 
@@ -14,14 +15,18 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final message = TextEditingController();
   final scroll = ScrollController();
+  bool loading = true, sending = false;
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        AppScope.read(context).markThreadRead(widget.creatorId);
-        bottom();
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final state = AppScope.read(context);
+      await state.ensureConversation(widget.creatorId);
+      await state.markThreadRead(widget.creatorId);
+      if (!mounted) return;
+      setState(() => loading = false);
+      bottom();
     });
   }
 
@@ -41,9 +46,17 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
   });
-  void send() {
-    if (message.text.trim().isEmpty) return;
-    AppScope.read(context).sendMessage(widget.creatorId, message.text);
+  Future<void> send() async {
+    if (message.text.trim().isEmpty || sending) return;
+    setState(() => sending = true);
+    final state = AppScope.read(context);
+    final ok = await state.sendMessage(widget.creatorId, message.text);
+    if (!mounted) return;
+    setState(() => sending = false);
+    if (!ok) {
+      toast(context, state.error ?? 'Pesan belum dapat dikirim.');
+      return;
+    }
     message.clear();
     bottom();
   }
@@ -81,9 +94,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
-                      'Percakapan demo',
-                      style: TextStyle(fontSize: 9, color: PColors.muted),
+                    Text(
+                      '@${creator.username}',
+                      style: const TextStyle(fontSize: 9, color: PColors.muted),
                     ),
                   ],
                 ),
@@ -99,13 +112,15 @@ class _ChatScreenState extends State<ChatScreen> {
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 25, vertical: 14),
               child: Text(
-                'Pesan di ruang ini hanya disimpan secara lokal.',
+                'Pesan tersimpan di server Pinspire.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 10, color: PColors.muted),
               ),
             ),
             Expanded(
-              child: messages.isEmpty
+              child: loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : messages.isEmpty
                   ? const EmptyState(
                       title: 'Sapa dan mulai cerita',
                       message: 'Coba tuliskan pesan pertamamu.',
@@ -155,7 +170,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  '${time(m.createdAt)}${m.mine ? ' · Disimpan' : ''}',
+                                  time(m.createdAt),
                                   style: const TextStyle(
                                     color: PColors.muted,
                                     fontSize: 8,
@@ -192,9 +207,17 @@ class _ChatScreenState extends State<ChatScreen> {
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: IconButton.filled(
-                        tooltip: 'Simpan pesan',
-                        onPressed: send,
-                        icon: const Icon(Icons.arrow_upward_rounded, size: 21),
+                        tooltip: 'Kirim pesan',
+                        onPressed: sending ? null : send,
+                        icon: sending
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.arrow_upward_rounded, size: 21),
                       ),
                     ),
                   ],

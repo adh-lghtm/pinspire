@@ -22,6 +22,18 @@ class PinDetailScreen extends StatefulWidget {
 class _PinDetailScreenState extends State<PinDetailScreen> {
   final comment = TextEditingController();
   final commentSection = GlobalKey();
+  bool sending = false;
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final state = AppScope.read(context);
+      if (state.pinById(widget.pinId) == null) state.loadPin(widget.pinId);
+      state.loadComments(widget.pinId);
+    });
+  }
+
   @override
   void dispose() {
     comment.dispose();
@@ -72,76 +84,94 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
     }
   }
 
-  void more(Pin pin) => showModalBottomSheet<void>(
-    context: context,
-    useSafeArea: true,
-    builder: (ctx) => Padding(
-      padding: const EdgeInsets.only(bottom: 20),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.copy_rounded),
-            title: const Text('Salin teks pin'),
-            onTap: () async {
-              await Clipboard.setData(ClipboardData(text: shareText(pin)));
-              if (ctx.mounted) Navigator.pop(ctx);
-              if (mounted) toast(context, 'Teks pin disalin');
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.visibility_off_outlined),
-            title: const Text('Sembunyikan dari rekomendasi'),
-            onTap: () {
-              AppScope.read(context).hidePin(pin.id);
-              Navigator.pop(ctx);
-              toast(context, 'Pin disembunyikan dari rekomendasi');
-            },
-          ),
-          if (pin.authorId == 'me')
+  void more(Pin pin) {
+    final state = AppScope.read(context);
+    showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.only(bottom: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             ListTile(
-              leading: const Icon(Icons.edit_outlined),
-              title: const Text('Edit pin'),
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.pushNamed(context, '/edit-pin', arguments: pin.id);
-              },
-            ),
-          if (pin.authorId == 'me')
-            ListTile(
-              leading: const Icon(
-                Icons.delete_outline_rounded,
-                color: PColors.coral,
-              ),
-              title: const Text('Hapus pin ini'),
+              leading: const Icon(Icons.copy_rounded),
+              title: const Text('Salin teks pin'),
               onTap: () async {
-                Navigator.pop(ctx);
-                final yes = await confirmAction(
-                  context,
-                  title: 'Hapus pin?',
-                  message: 'Pin ini akan dihapus dari profil dan semua board milikmu.',
-                );
-                if (yes && mounted) {
-                  AppScope.read(context).deletePin(pin.id);
-                  Navigator.pop(context);
-                }
+                await Clipboard.setData(ClipboardData(text: shareText(pin)));
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) toast(context, 'Teks pin disalin');
               },
             ),
-        ],
+            ListTile(
+              leading: const Icon(Icons.visibility_off_outlined),
+              title: const Text('Sembunyikan dari rekomendasi'),
+              onTap: () {
+                AppScope.read(context).hidePin(pin.id);
+                Navigator.pop(ctx);
+                toast(context, 'Pin disembunyikan dari rekomendasi');
+              },
+            ),
+            if (pin.authorId == state.profile.id)
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('Edit pin'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.pushNamed(context, '/edit-pin', arguments: pin.id);
+                },
+              ),
+            if (pin.authorId == state.profile.id)
+              ListTile(
+                leading: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: PColors.coral,
+                ),
+                title: const Text('Hapus pin ini'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final yes = await confirmAction(
+                    context,
+                    title: 'Hapus pin?',
+                    message: 'Pin ini akan dihapus dari profil dan semua board milikmu.',
+                  );
+                  if (yes && mounted) {
+                    await state.deletePin(pin.id);
+                    if (mounted) Navigator.pop(context);
+                  }
+                },
+              ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final pin = state.pinById(widget.pinId);
     if (pin == null) {
+      final loading = state.isLoadingPin(widget.pinId);
       return Scaffold(
         appBar: AppBar(),
-        body: const EmptyState(
-          title: 'Pin sudah dihapus',
-          message: 'Kembali untuk menjelajahi inspirasi lainnya.',
-        ),
+        body: loading
+            ? const Center(child: CircularProgressIndicator())
+            : EmptyState(
+                title: state.isMissingPin(widget.pinId)
+                    ? 'Pin tidak ditemukan'
+                    : 'Inspirasi belum termuat',
+                message: state.isMissingPin(widget.pinId)
+                    ? 'Pin ini mungkin sudah dihapus atau tidak lagi tersedia.'
+                    : 'Periksa koneksi ke server Pinspire, lalu coba lagi.',
+                icon: state.isMissingPin(widget.pinId)
+                    ? Icons.image_not_supported_outlined
+                    : Icons.cloud_off_rounded,
+                action: FilledButton(
+                  onPressed: () => state.loadPin(widget.pinId),
+                  child: const Text('Coba lagi'),
+                ),
+              ),
       );
     }
     final author = state.creator(pin.authorId);
@@ -256,7 +286,7 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
               ),
             ),
             const SizedBox(width: 8),
-            if (author.id != 'me')
+            if (author.id.isNotEmpty && author.id != state.profile.id)
               OutlinedButton(
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size(70, 38),
@@ -295,7 +325,7 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
             ),
             const SizedBox(width: 6),
             Text(
-              compactNumber(pin.likes + (liked ? 1 : 0)),
+              compactNumber(pin.likes),
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
             ),
             const Spacer(),
@@ -465,7 +495,18 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
                 ],
               ),
               const SizedBox(height: 15),
-              if (comments.isEmpty)
+              if (state.isLoadingComments(pin.id) && comments.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 15),
+                  child: Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                )
+              else if (comments.isEmpty)
                 const Padding(
                   padding: EdgeInsets.only(bottom: 15),
                   child: Text(
@@ -477,24 +518,26 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
                     ),
                   ),
                 ),
-              ...comments.map(
-                (c) => Padding(
+              ...comments.map((c) {
+                final name = c.authorName.isEmpty
+                    ? state.creator(c.author).name
+                    : c.authorName;
+                final avatar = c.authorAvatar.isEmpty
+                    ? state.creator(c.author).avatar
+                    : c.authorAvatar;
+                return Padding(
                   padding: const EdgeInsets.only(bottom: 16),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      UserAvatar(
-                        name: state.creator(c.author).name,
-                        image: state.creator(c.author).avatar,
-                        size: 32,
-                      ),
+                      UserAvatar(name: name, image: avatar, size: 32),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              '${state.creator(c.author).name} · ${dateLabel(c.createdAt)}',
+                              '$name · ${dateLabel(c.createdAt)}',
                               style: const TextStyle(
                                 fontSize: 10,
                                 color: PColors.muted,
@@ -508,7 +551,7 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
                           ],
                         ),
                       ),
-                      if (c.author == 'me')
+                      if (c.mine)
                         IconButton(
                           tooltip: 'Hapus komentar',
                           onPressed: () => state.deleteComment(c.id),
@@ -520,8 +563,8 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
                         ),
                     ],
                   ),
-                ),
-              ),
+                );
+              }),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -542,13 +585,35 @@ class _PinDetailScreenState extends State<PinDetailScreen> {
                     padding: const EdgeInsets.only(top: 5),
                     child: IconButton.filled(
                       tooltip: 'Kirim komentar',
-                      onPressed: () {
-                        if (comment.text.trim().isEmpty) return;
-                        state.addComment(pin.id, comment.text);
-                        comment.clear();
-                        FocusScope.of(context).unfocus();
-                      },
-                      icon: const Icon(Icons.arrow_upward_rounded, size: 21),
+                      onPressed: sending
+                          ? null
+                          : () async {
+                              if (comment.text.trim().isEmpty) return;
+                              setState(() => sending = true);
+                              final added = await state.addComment(
+                                pin.id,
+                                comment.text,
+                              );
+                              if (!context.mounted) return;
+                              setState(() => sending = false);
+                              if (added == null) {
+                                toast(
+                                  context,
+                                  state.error ??
+                                      'Komentar belum dapat dikirim.',
+                                );
+                                return;
+                              }
+                              comment.clear();
+                              FocusScope.of(context).unfocus();
+                            },
+                      icon: sending
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.arrow_upward_rounded, size: 21),
                     ),
                   ),
                 ],
