@@ -1,30 +1,120 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pinspire/main.dart';
+import 'package:pinspire/models/models.dart';
+import 'package:pinspire/services/local_store.dart';
+import 'package:pinspire/state/app_state.dart';
 
-import 'package:pincopy/main.dart';
+Future<AppState> demoApp(
+  WidgetTester tester, {
+  Size size = const Size(390, 844),
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  final state = AppState(MemoryStore());
+  await state.initialize();
+  await state.signIn(const UserProfile());
+  await tester.pumpWidget(PinspireApp(state: state));
+  await tester.pumpAndSettle();
+  return state;
+}
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
-
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() async {
+    final loader = FontLoader('PlusJakartaSans')
+      ..addFont(rootBundle.load('assets/fonts/PlusJakartaSans.ttf'));
+    await loader.load();
+  });
+  testWidgets('main navigation and pin detail work at phone width', (
+    tester,
+  ) async {
+    final state = await demoApp(tester);
+    expect(find.text('Sedikit ide,\nbanyak kemungkinan.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.text('Jelajah'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'pantai');
+    await tester.pumpAndSettle();
+    expect(find.textContaining('hasil untuk'), findsOneWidget);
+    await tester.tap(find.text('Profil'));
+    await tester.pumpAndSettle();
+    expect(find.text('@iza.creates'), findsOneWidget);
+    await tester.tap(find.text('Beranda'));
+    await tester.pumpAndSettle();
+    final context = tester.element(find.text('pinspire').first);
+    Navigator.pushNamed(context, '/pin', arguments: 'p01');
+    await tester.pumpAndSettle();
+    expect(find.text('Inspirasi, lebih dekat'), findsOneWidget);
+    final like = find.byTooltip('Suka pin');
+    await tester.ensureVisible(like);
+    await tester.tap(like);
+    await tester.pumpAndSettle();
+    expect(state.likedIds, contains('p01'));
+    expect(tester.takeException(), isNull);
+    await state.flush();
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+  for (final size in [const Size(320, 740), const Size(1440, 1000)]) {
+    testWidgets(
+      'home and create form have no layout exceptions at ${size.width}',
+      (tester) async {
+        final state = await demoApp(tester, size: size);
+        expect(tester.takeException(), isNull);
+        final context = tester.element(find.text('pinspire').first);
+        Navigator.pushNamed(context, '/create');
+        await tester.pumpAndSettle();
+        expect(find.text('Awali dengan sebuah gambar'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await state.flush();
+        await tester.pumpWidget(const SizedBox());
+        state.dispose();
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      },
+    );
+  }
+  testWidgets('a refreshed detail route starts home and retains local data', (
+    tester,
+  ) async {
+    tester.binding.platformDispatcher.defaultRouteNameTestValue = '/pin';
+    addTearDown(
+      tester.binding.platformDispatcher.clearDefaultRouteNameTestValue,
+    );
+    final state = await demoApp(tester);
+    expect(find.text('Sedikit ide,\nbanyak kemungkinan.'), findsOneWidget);
+    expect(find.text('Pin sudah dihapus'), findsNothing);
+    expect(state.savedPins.length, 10);
+    expect(tester.takeException(), isNull);
+    await state.flush();
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+  testWidgets('onboarding can advance to local login', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    final state = AppState(MemoryStore());
+    await state.initialize();
+    await tester.pumpWidget(PinspireApp(state: state));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Mulai temukan inspirasi'));
+    await tester.tap(find.text('Mulai temukan inspirasi'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Lanjut dengan 3 minat'));
+    await tester.tap(find.text('Lanjut dengan 3 minat'));
+    await tester.pumpAndSettle();
+    expect(find.text('Jelajahi dengan akun demo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await state.flush();
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
   });
 }
